@@ -13,6 +13,9 @@ from datetime import datetime
 import pandas as pd
 import yfinance as yf
 
+# Suppress yfinance's own HTTP-error prints (401s for restricted endpoints)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
 from src.data.cache import get_cache
 from src.data.models import (
     CompanyNews,
@@ -30,7 +33,7 @@ _cache = get_cache()
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _safe(val, default=None):
-    """Return None for NaN/None values."""
+    """Return None for NaN/None values; convert numpy scalars to Python natives."""
     if val is None:
         return default
     try:
@@ -38,6 +41,9 @@ def _safe(val, default=None):
             return default
     except Exception:
         pass
+    # numpy scalars (float64, bool_, int64, …) are not JSON-serialisable; unwrap them.
+    if hasattr(val, "item"):
+        return val.item()
     return val
 
 

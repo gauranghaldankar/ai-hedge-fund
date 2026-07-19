@@ -75,12 +75,9 @@ def news_sentiment_agent(state: AgentState, agent_id: str = "news_sentiment_agen
                 # Note: this is an opportunity for improvement!
                 progress.update_status(agent_id, ticker, f"Analyzing sentiment for article {idx + 1} of {len(articles_to_analyze)}")
                 prompt = (
-                    f"Please analyze the sentiment of the following news headline "
-                    f"with the following context: "
-                    f"The stock is {ticker}. "
-                    f"Determine if sentiment is 'positive', 'negative', or 'neutral' for the stock {ticker} only. "
-                    f"Also provide a confidence score for your prediction from 0 to 100. "
-                    f"Respond in JSON format.\n\n"
+                    f"Analyze the sentiment of the following news headline for stock {ticker}. "
+                    f"Return ONLY valid JSON with exactly these two fields:\n"
+                    f'{{"sentiment": "positive" | "negative" | "neutral", "confidence": <integer 0-100>}}\n\n'
                     f"Headline: {news.title}"
                 )
                 response = call_llm(prompt, Sentiment, agent_name=agent_id, state=state)
