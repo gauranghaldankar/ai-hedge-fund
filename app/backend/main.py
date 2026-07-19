@@ -4,7 +4,7 @@ import logging
 import asyncio
 
 from app.backend.routes import api_router
-from app.backend.database.connection import engine
+from app.backend.database.connection import engine, run_migrations
 from app.backend.database.models import Base
 from app.backend.services.ollama_service import ollama_service
 
@@ -14,8 +14,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Hedge Fund API", description="Backend API for AI Hedge Fund", version="0.1.0")
 
-# Initialize database tables (this is safe to run multiple times)
+# Initialize database tables (safe to run multiple times)
 Base.metadata.create_all(bind=engine)
+# Apply column-addition migrations (idempotent; runs after create_all)
+run_migrations(engine)
 
 # Configure CORS
 app.add_middleware(
