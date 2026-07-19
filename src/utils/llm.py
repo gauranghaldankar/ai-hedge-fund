@@ -4,7 +4,35 @@ import json
 from pydantic import BaseModel
 from src.llm.models import get_model, get_model_info
 from src.utils.progress import progress
+from src.utils import rate_limiter
 from src.graph.state import AgentState
+
+# When the primary provider is Google, fall back through this chain on rate limits.
+# Only free/local providers are used — never paid fallbacks.
+_GOOGLE_FALLBACKS = [
+    ("google/gemma-4-31b-it:free", "OpenRouter"),  # free tier on OpenRouter
+    ("qwen3.5:9b", "Ollama"),                       # local, zero cost
+]
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    """Return True if the exception looks like a provider rate-limit / quota error."""
+    msg = str(exc).lower()
+    return any(k in msg for k in (
+        "429", "rate limit", "rate_limit", "quota", "resource_exhausted",
+        "resource has been exhausted", "too many requests",
+    ))
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    """Return True for errors that retrying cannot fix (auth failures, missing models)."""
+    msg = str(exc).lower()
+    return any(k in msg for k in (
+        "api key not valid", "api_key_invalid", "invalid api key",
+        "missing authentication", "401", "unauthorized",
+        "authentication", "invalid crumb",
+        "unavailable for free", "model is unavailable",  # OpenRouter 404 for gone free models
+    ))
 
 
 def call_llm(
@@ -16,71 +44,105 @@ def call_llm(
     default_factory=None,
 ) -> BaseModel:
     """
-    Makes an LLM call with retry logic, handling both JSON supported and non-JSON supported models.
+    Makes an LLM call with retry logic and a provider fallback chain.
+
+    Primary provider: Google Gemini (rate-limited to 15 RPM / 1500 per day).
+    On rate-limit or daily-quota exhaustion, falls back automatically to:
+      1. OpenRouter (free models only)
+      2. Local Ollama
 
     Args:
         prompt: The prompt to send to the LLM
         pydantic_model: The Pydantic model class to structure the output
         agent_name: Optional name of the agent for progress updates and model config extraction
         state: Optional state object to extract agent-specific model configuration
-        max_retries: Maximum number of retries (default: 3)
+        max_retries: Maximum number of retries per provider (default: 3)
         default_factory: Optional factory function to create default response on failure
 
     Returns:
         An instance of the specified Pydantic model
     """
-    
     # Extract model configuration if state is provided and agent_name is available
     if state and agent_name:
         model_name, model_provider = get_agent_model_config(state, agent_name)
     else:
-        # Use system defaults when no state or agent_name is provided
-        model_name = "gpt-4.1"
-        model_provider = "OPENAI"
+        # Default to Google Gemini free tier
+        model_name = "gemini-2.0-flash"
+        model_provider = "Google"
 
     # Extract API keys from state if available
     api_keys = None
     if state:
         request = state.get("metadata", {}).get("request")
-        if request and hasattr(request, 'api_keys'):
+        if request and hasattr(request, "api_keys"):
             api_keys = request.api_keys
 
-    model_info = get_model_info(model_name, model_provider)
-    llm = get_model(model_name, model_provider, api_keys)
+    # Build the provider chain: primary + automatic fallbacks for Google
+    chain = [(model_name, model_provider)]
+    if model_provider == "Google":
+        chain.extend(_GOOGLE_FALLBACKS)
 
-    # For non-JSON support models, we can use structured output
-    if not (model_info and not model_info.has_json_mode()):
-        llm = llm.with_structured_output(
-            pydantic_model,
-            method="json_mode",
-        )
+    for mn, mp in chain:
+        # Pre-flight rate-limit check for Google — blocks for RPM, skips on daily exhaustion
+        if mp == "Google":
+            if not rate_limiter.acquire():
+                used = rate_limiter.daily_used()
+                print(f"[LLM] Google daily quota exhausted ({used}/{rate_limiter.DAILY_LIMIT}), switching to next provider")
+                continue
 
-    # Call the LLM with retries
-    for attempt in range(max_retries):
+        model_info = get_model_info(mn, mp)
         try:
-            # Call the LLM
-            result = llm.invoke(prompt)
-
-            # For non-JSON support models, we need to extract and parse the JSON manually
-            if model_info and not model_info.has_json_mode():
-                parsed_result = extract_json_from_response(result.content)
-                if parsed_result:
-                    return pydantic_model(**parsed_result)
-            else:
-                return result
-
+            llm = get_model(mn, mp, api_keys)
+        except ValueError as e:
+            # Missing key in get_model() raises ValueError — skip immediately, no retry
+            print(f"[LLM] Cannot initialize {mp}/{mn} (missing key?): {e} — trying next provider")
+            continue
         except Exception as e:
-            if agent_name:
-                progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
+            print(f"[LLM] Cannot initialize {mp}/{mn}: {e} — trying next provider")
+            continue
 
-            if attempt == max_retries - 1:
-                print(f"Error in LLM call after {max_retries} attempts: {e}")
-                # Use default_factory if provided, otherwise create a basic default
-                if default_factory:
-                    return default_factory()
-                return create_default_response(pydantic_model)
+        # Ollama thinking models (qwen3, deepseek-r1, etc.) emit <think>...</think>
+        # blocks before their JSON, which breaks structured output. Always use manual
+        # extraction for Ollama so extract_json_from_response can strip the tags.
+        is_ollama = (mp == "Ollama")
+        use_json_mode = not is_ollama and not (model_info and not model_info.has_json_mode())
+        if use_json_mode:
+            llm = llm.with_structured_output(pydantic_model, method="json_mode")
 
-    # This should never be reached due to the retry logic above
+        for attempt in range(max_retries):
+            try:
+                if agent_name:
+                    progress.update_status(agent_name, None, f"Thinking via {mp}...")
+                result = llm.invoke(prompt)
+
+                if not use_json_mode:
+                    parsed_result = extract_json_from_response(result.content)
+                    if parsed_result:
+                        return pydantic_model(**parsed_result)
+                else:
+                    return result
+
+            except Exception as e:
+                if _is_auth_error(e):
+                    # Bad/missing key — retrying won't help; move to next provider immediately.
+                    print(f"[LLM] Auth error on {mp}/{mn} — check your API key in .env. Switching to next provider.")
+                    break
+
+                if _is_rate_limited(e):
+                    print(f"[LLM] Rate limited by {mp}/{mn} — switching to next provider")
+                    break  # exit retry loop, try next provider in chain
+
+                if agent_name:
+                    progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
+
+                if attempt == max_retries - 1:
+                    print(f"[LLM] {mp}/{mn} failed after {max_retries} attempts: {e} — trying next provider")
+                    break
+
+    # All providers in the chain were exhausted
+    print("[LLM] All providers exhausted — returning default response")
+    if default_factory:
+        return default_factory()
     return create_default_response(pydantic_model)
 
 
@@ -108,6 +170,7 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
 
 def extract_json_from_response(content) -> dict | None:
     """Extracts JSON from a response, handling markdown-wrapped and raw JSON formats."""
+    import re
     try:
         # Reasoning models (e.g. Anthropic extended thinking) return content as a
         # list of blocks (thinking + text). Concatenate the text blocks.
@@ -119,6 +182,9 @@ def extract_json_from_response(content) -> dict | None:
                 elif isinstance(block, dict) and block.get("type") == "text":
                     parts.append(block.get("text", ""))
             content = "\n".join(parts)
+        # Strip Ollama/qwen3 thinking blocks (<think>...</think>) so the brace
+        # matcher doesn't get confused by JSON-like content inside the reasoning.
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         # 1. Try markdown code block with ```json
         json_start = content.find("```json")
         if json_start != -1:
