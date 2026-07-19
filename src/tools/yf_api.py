@@ -292,11 +292,17 @@ def _extract_period(
             if inc is not None and not inc.empty and len(inc.columns) > col_idx
             else pd.Series(dtype=float)
         )
-        cf_ttm = (
-            cf.iloc[:, col_idx: col_idx + n_q].sum(axis=1)
-            if cf is not None and not cf.empty and len(cf.columns) > col_idx
-            else pd.Series(dtype=float)
-        )
+        if cf is not None and not cf.empty and len(cf.columns) > col_idx:
+            cf_ttm = cf.iloc[:, col_idx: col_idx + n_q].sum(axis=1)
+        else:
+            # Quarterly cashflow unavailable (common for Indian stocks on yfinance);
+            # fall back to the most recent annual cashflow column as a proxy.
+            cf_annual = t.cashflow
+            cf_ttm = (
+                cf_annual.iloc[:, 0]
+                if cf_annual is not None and not cf_annual.empty
+                else pd.Series(dtype=float)
+            )
         bs_snap = (
             bs.iloc[:, col_idx]
             if bs is not None and not bs.empty and len(bs.columns) > col_idx
