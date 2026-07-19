@@ -182,7 +182,9 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
         if not api_key:
             print(f"API Key Error: Please make sure GOOGLE_API_KEY is set in your .env file or provided via API keys.")
             raise ValueError("Google API key not found.  Please make sure GOOGLE_API_KEY is set in your .env file or provided via API keys.")
-        return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
+        # max_retries=0: disable LangChain's internal retry loop so our fallback
+        # chain fires immediately on 429 instead of waiting 2+4+8+16+32 seconds.
+        return ChatGoogleGenerativeAI(model=model_name, api_key=api_key, max_retries=0)
     elif model_provider == ModelProvider.OLLAMA:
         # For Ollama, we use a base URL instead of an API key
         # Check if OLLAMA_HOST is set (for Docker on macOS)

@@ -1,5 +1,10 @@
 [
   {
+    "display_name": "Gemini 2.0 Flash (free tier)",
+    "model_name": "gemini-2.0-flash",
+    "provider": "Google"
+  },
+  {
     "display_name": "Fable 5",
     "model_name": "claude-fable-5",
     "provider": "Anthropic"

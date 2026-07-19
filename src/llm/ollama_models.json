@@ -1,5 +1,15 @@
 [
   {
+    "display_name": "Qwen 3.5 (9B) — installed",
+    "model_name": "qwen3.5:9b",
+    "provider": "Ollama"
+  },
+  {
+    "display_name": "Gemma 4 E4B — installed",
+    "model_name": "gemma4:e4b",
+    "provider": "Ollama"
+  },
+  {
     "display_name": "gpt-oss (20B)",
     "model_name": "gpt-oss:20b",
     "provider": "OpenAI"
