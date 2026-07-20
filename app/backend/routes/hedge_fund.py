@@ -4,12 +4,13 @@ from sqlalchemy.orm import Session
 import asyncio
 
 from app.backend.database import get_db
-from app.backend.models.schemas import ErrorResponse, HedgeFundRequest, BacktestRequest, BacktestDayResult, BacktestPerformanceMetrics
+from app.backend.models.schemas import ErrorResponse, HedgeFundRequest, BacktestRequest, BacktestDayResult, BacktestPerformanceMetrics, FlowRunStatus
 from app.backend.models.events import StartEvent, ProgressUpdateEvent, ErrorEvent, CompleteEvent
 from app.backend.services.graph import create_graph, parse_hedge_fund_response, run_graph_async
 from app.backend.services.portfolio import create_portfolio
 from app.backend.services.backtest_service import BacktestService
 from app.backend.services.api_key_service import ApiKeyService
+from app.backend.repositories.flow_run_repository import FlowRunRepository
 from src.utils.progress import progress
 from src.utils.analysts import get_agents_list
 
@@ -65,6 +66,21 @@ async def run(request_data: HedgeFundRequest, request: Request, db: Session = De
             progress_queue = asyncio.Queue()
             run_task = None
             disconnect_task = None
+
+            # Create a DB run record if flow_id was provided (AC-0237)
+            flow_run_id = None
+            if request_data.flow_id:
+                try:
+                    repo = FlowRunRepository(db)
+                    safe_request = request_data.model_dump(exclude={"api_keys"})
+                    flow_run = repo.create_flow_run(
+                        flow_id=request_data.flow_id,
+                        request_data=safe_request,
+                    )
+                    flow_run_id = flow_run.id
+                    repo.update_flow_run(flow_run_id, status=FlowRunStatus.IN_PROGRESS)
+                except Exception as exc:
+                    print(f"[hedge_fund] Failed to create flow run record: {exc}")
 
             # Simple handler to add updates to the queue
             def progress_handler(agent_name, ticker, status, analysis, timestamp):
@@ -127,17 +143,38 @@ async def run(request_data: HedgeFundRequest, request: Request, db: Session = De
                     return
 
                 # Send the final result
-                final_data = CompleteEvent(
-                    data={
-                        "decisions": parse_hedge_fund_response(result.get("messages", [])[-1].content),
-                        "analyst_signals": result.get("data", {}).get("analyst_signals", {}),
-                        "current_prices": result.get("data", {}).get("current_prices", {}),
-                    }
-                )
+                run_results = {
+                    "decisions": parse_hedge_fund_response(result.get("messages", [])[-1].content),
+                    "analyst_signals": result.get("data", {}).get("analyst_signals", {}),
+                    "current_prices": result.get("data", {}).get("current_prices", {}),
+                }
+                final_data = CompleteEvent(data=run_results)
                 yield final_data.to_sse()
+
+                # Persist results to DB (AC-0238, AC-0239)
+                if flow_run_id:
+                    try:
+                        repo = FlowRunRepository(db)
+                        repo.update_flow_run(
+                            flow_run_id,
+                            status=FlowRunStatus.COMPLETE,
+                            results=run_results,
+                        )
+                    except Exception as exc:
+                        print(f"[hedge_fund] Failed to save flow run results: {exc}")
 
             except asyncio.CancelledError:
                 print("Event generator cancelled")
+                # Mark run as error on cancellation (AC-0240)
+                if flow_run_id:
+                    try:
+                        FlowRunRepository(db).update_flow_run(
+                            flow_run_id,
+                            status=FlowRunStatus.ERROR,
+                            error_message="Run was cancelled",
+                        )
+                    except Exception:
+                        pass
                 return
             finally:
                 # Clean up
