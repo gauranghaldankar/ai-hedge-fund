@@ -52,6 +52,10 @@ class CustomTickerRequest(BaseModel):
     custom_weights: dict[str, float] | None = None
 
 
+class BackfillRequest(BaseModel):
+    force: bool = False  # if True, re-run dates that already have a COMPLETE run
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -282,6 +286,165 @@ async def trigger_run(req: RunRequest, db: Session = Depends(get_db)):
             )
             db.commit()
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# POST /screener/backfill — run last 7 trading days sequentially
+# ---------------------------------------------------------------------------
+
+@router.post("/backfill")
+async def trigger_backfill(req: BackfillRequest, db: Session = Depends(get_db)):
+    """
+    Backfill the last 7 NSE trading days.
+    Skips dates that already have a COMPLETE run (unless force=True).
+    Streams SSE: backfill_start → [backfill_day_start → progress* → backfill_day_complete]* → backfill_complete
+    AC-0115
+    """
+    async def event_generator():
+        from src.screener.holidays import last_n_trading_days
+        from src.screener.constituents import get_nifty500_constituents
+        from src.screener.run_screener import run_screener, ScreenerResult
+        from src.screener.composite import apply_threshold, MEDIUM_LONG
+
+        # Oldest → newest so history builds chronologically
+        trading_days = list(reversed(last_n_trading_days(7)))
+        date_strs = [d.strftime("%Y-%m-%d") for d in trading_days]
+
+        # Skip dates that already have a completed run (unless force)
+        if not req.force:
+            existing = {
+                r.run_date
+                for r in db.query(ScreenerRun)
+                .filter(ScreenerRun.status == "COMPLETE", ScreenerRun.run_date.in_(date_strs))
+                .all()
+                if r.run_date
+            }
+            dates_to_run = [d for d in date_strs if d not in existing]
+        else:
+            dates_to_run = date_strs
+
+        skipped = len(date_strs) - len(dates_to_run)
+        yield f"data: {json.dumps({'type': 'backfill_start', 'dates': dates_to_run, 'total_days': len(dates_to_run), 'skipped': skipped})}\n\n"
+
+        if not dates_to_run:
+            yield f"data: {json.dumps({'type': 'backfill_complete', 'days_run': 0, 'skipped': skipped})}\n\n"
+            return
+
+        # Fetch constituents once; reuse across days
+        constituents = get_nifty500_constituents()
+        tickers = [c["ticker"] for c in constituents]
+        company_info = {c["ticker"]: (c["company_name"], c["industry"]) for c in constituents}
+
+        for day_idx, date_str in enumerate(dates_to_run, start=1):
+            yield f"data: {json.dumps({'type': 'backfill_day_start', 'date': date_str, 'day': day_idx, 'total_days': len(dates_to_run)})}\n\n"
+
+            run_record = ScreenerRun(
+                status="IN_PROGRESS",
+                threshold_mode="top25",
+                weight_profile="medium_long",
+                source="backfill",
+                run_date=date_str,
+            )
+            db.add(run_record)
+            db.commit()
+            db.refresh(run_record)
+            run_id = run_record.id
+
+            progress_queue: asyncio.Queue = asyncio.Queue()
+            start_time = asyncio.get_event_loop().time()
+
+            def on_progress(done: int, total_count: int, result: ScreenerResult, _q=progress_queue):
+                _q.put_nowait({
+                    "type": "progress",
+                    "ticker": result.ticker,
+                    "done": done,
+                    "total": total_count,
+                    "score": round(result.composite_score, 2),
+                    "error": result.error,
+                })
+
+            loop = asyncio.get_event_loop()
+            run_future = loop.run_in_executor(
+                _executor,
+                lambda ds=date_str: run_screener(
+                    tickers=tickers,
+                    company_info=company_info,
+                    profile=MEDIUM_LONG,
+                    end_date=ds,
+                    on_progress=on_progress,
+                ),
+            )
+
+            try:
+                results_list = None
+                while True:
+                    if results_list is not None and progress_queue.empty():
+                        break
+                    try:
+                        event = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
+                        yield f"data: {json.dumps(event)}\n\n"
+                    except asyncio.TimeoutError:
+                        if run_future.done():
+                            results_list = run_future.result()
+                            while not progress_queue.empty():
+                                event = progress_queue.get_nowait()
+                                yield f"data: {json.dumps(event)}\n\n"
+                            break
+
+                if results_list is None:
+                    results_list = await run_future
+
+                result_dicts = [
+                    {"ticker": r.ticker, "composite_score": r.composite_score, "is_shortlisted": False}
+                    for r in results_list
+                ]
+                apply_threshold(result_dicts, "top25")
+                shortlisted_map = {d["ticker"]: d["is_shortlisted"] for d in result_dicts}
+
+                duration = asyncio.get_event_loop().time() - start_time
+                shortlisted_count = sum(1 for v in shortlisted_map.values() if v)
+
+                for r in results_list:
+                    db.add(ScreenerResultDB(
+                        run_id=run_id,
+                        ticker=r.ticker,
+                        company_name=r.company_name,
+                        industry=r.industry,
+                        rank=r.rank,
+                        composite_score=r.composite_score,
+                        valuation_score=r.valuation_score,
+                        fundamentals_score=r.fundamentals_score,
+                        jhunjhunwala_score=r.jhunjhunwala_score,
+                        growth_score=r.growth_score,
+                        insider_score=r.insider_score,
+                        technical_score=r.technical_score,
+                        is_shortlisted=shortlisted_map.get(r.ticker, False),
+                        key_metrics=r.key_metrics,
+                        scored_at=r.scored_at,
+                        error=r.error,
+                    ))
+
+                db.query(ScreenerRun).filter(ScreenerRun.id == run_id).update({
+                    "status": "COMPLETE",
+                    "stocks_screened": len(results_list),
+                    "shortlisted_count": shortlisted_count,
+                    "duration_seconds": round(duration, 1),
+                })
+                db.commit()
+
+                yield f"data: {json.dumps({'type': 'backfill_day_complete', 'date': date_str, 'day': day_idx, 'total_days': len(dates_to_run), 'run_id': run_id, 'shortlisted': shortlisted_count})}\n\n"
+
+            except Exception as exc:
+                logger.error("Backfill day %s failed: %s", date_str, exc, exc_info=True)
+                db.query(ScreenerRun).filter(ScreenerRun.id == run_id).update(
+                    {"status": "ERROR", "error_message": str(exc)}
+                )
+                db.commit()
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Day {date_str} failed: {exc}', 'date': date_str})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'backfill_complete', 'days_run': len(dates_to_run), 'skipped': skipped})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
