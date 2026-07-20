@@ -125,8 +125,14 @@ export function useFlowConnection(flowId: string | null) {
     });
 
     try {
+      // Inject flow_id so the backend can persist the run (AC-0249)
+      const paramsWithFlowId: HedgeFundRequest = {
+        ...params,
+        flow_id: flowId ? parseInt(flowId, 10) : undefined,
+      };
+
       // Start the API call
-      const abortController = api.runHedgeFund(params, nodeContext, flowId);
+      const abortController = api.runHedgeFund(paramsWithFlowId, nodeContext, flowId);
 
       // Update connection with abort controller
       flowConnectionManager.setConnection(flowId, {
