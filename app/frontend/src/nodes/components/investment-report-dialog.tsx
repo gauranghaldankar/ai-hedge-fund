@@ -26,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { getCurrencySymbol } from '@/lib/currency-utils';
 import { extractBaseAgentKey } from '@/data/node-mappings';
 import { createAgentDisplayNames } from '@/utils/text-utils';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
@@ -142,7 +143,7 @@ export function InvestmentReportDialog({
                       return (
                         <TableRow key={ticker}>
                           <TableCell className="font-medium">{ticker}</TableCell>
-                          <TableCell>${typeof currentPrice === 'number' ? currentPrice.toFixed(2) : currentPrice}</TableCell>
+                          <TableCell>{getCurrencySymbol(ticker)}{typeof currentPrice === 'number' ? currentPrice.toFixed(2) : currentPrice}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               {getActionIcon(decision.action as ActionType)}

@@ -24,6 +24,7 @@ import { useNodeContext } from '@/contexts/node-context';
 import { useFlowConnection } from '@/hooks/use-flow-connection';
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 import { useNodeState } from '@/hooks/use-node-state';
+import { getCurrencySymbol } from '@/lib/currency-utils';
 import { cn, formatKeyboardShortcut } from '@/lib/utils';
 import { type PortfolioStartNode } from '../types';
 import { NodeShell } from './node-shell';
@@ -246,8 +247,8 @@ export function PortfolioStartNode({
         // No global model - each agent uses its own model or system default
         model_name: undefined,
         model_provider: undefined,
-        start_date: threeMonthsAgo.toISOString().split('T')[0],
-        end_date: today.toISOString().split('T')[0],
+        start_date: (() => { const d = new Date(); d.setMonth(d.getMonth() - 3); return d.toISOString().split('T')[0]; })(),
+        end_date: new Date().toISOString().split('T')[0],
         initial_cash: parseFloat(initialCash) || 100000,
         // Pass portfolio positions to backend
         portfolio_positions: portfolioPositions,
@@ -279,7 +280,7 @@ export function PortfolioStartNode({
                 </div>
                 <div className="relative flex-1">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground pointer-events-none">
-                    $
+                    {getCurrencySymbol(positions[0]?.ticker || '')}
                   </div>
                   <Input
                     type="number"
@@ -323,7 +324,7 @@ export function PortfolioStartNode({
                       />
                       <div className="relative flex-1">
                         <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground pointer-events-none">
-                          $
+                          {getCurrencySymbol(position.ticker)}
                         </div>
                         <Input
                           type="number"
