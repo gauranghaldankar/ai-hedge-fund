@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button';
-import { Play, RefreshCw, Loader2, CalendarDays } from 'lucide-react';
+import { Play, RefreshCw, Loader2 } from 'lucide-react';
 import { ScreenerRunSummary, ThresholdMode, WeightProfileName } from './types';
 import { WeightProfileSelector } from './WeightProfileSelector';
 import { cn } from '@/lib/utils';
@@ -8,11 +8,9 @@ interface ScreenerToolbarProps {
   runs: ScreenerRunSummary[];
   activeRunId: number | null;
   isRunning: boolean;
-  isBackfilling: boolean;
   thresholdMode: ThresholdMode;
   weightProfile: WeightProfileName;
   onRunScreener: () => void;
-  onBackfill: () => void;
   onSelectRun: (id: number) => void;
   onThresholdChange: (mode: ThresholdMode) => void;
   onWeightProfileChange: (profile: WeightProfileName) => void;
@@ -30,11 +28,9 @@ export function ScreenerToolbar({
   runs,
   activeRunId,
   isRunning,
-  isBackfilling,
   thresholdMode,
   weightProfile,
   onRunScreener,
-  onBackfill,
   onSelectRun,
   onThresholdChange,
   onWeightProfileChange,
@@ -50,7 +46,7 @@ export function ScreenerToolbar({
         size="sm"
         className="h-8 gap-1.5 text-xs"
         onClick={onRunScreener}
-        disabled={isRunning || isBackfilling}
+        disabled={isRunning}
       >
         {isRunning ? (
           <Loader2 size={12} className="animate-spin" />
@@ -58,23 +54,6 @@ export function ScreenerToolbar({
           <Play size={12} />
         )}
         {isRunning ? 'Running...' : 'Run Screener'}
-      </Button>
-
-      {/* Backfill button */}
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-8 gap-1.5 text-xs"
-        onClick={onBackfill}
-        disabled={isRunning || isBackfilling}
-        title="Score the last 7 NSE trading days (skips already-done dates)"
-      >
-        {isBackfilling ? (
-          <Loader2 size={12} className="animate-spin" />
-        ) : (
-          <CalendarDays size={12} />
-        )}
-        {isBackfilling ? 'Backfilling...' : 'Backfill 7 Days'}
       </Button>
 
       {/* Run history dropdown */}

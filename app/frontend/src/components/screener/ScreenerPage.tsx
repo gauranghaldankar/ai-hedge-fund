@@ -7,7 +7,6 @@ import {
   WeightProfileName,
   ProgressEvent,
   SSEEvent,
-  BackfillSSEEvent,
   WeightValues,
 } from './types';
 import { PROFILES, computeCompositeClientSide } from './profiles';
@@ -53,15 +52,11 @@ export function ScreenerPage() {
   const [progressDone, setProgressDone] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
 
-  const [isBackfilling, setIsBackfilling] = useState(false);
-  const [backfillDay, setBackfillDay] = useState<{ day: number; totalDays: number; date: string } | undefined>(undefined);
-
   const [selectedRow, setSelectedRow] = useState<ScreenerResultRow | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showCustomSearch, setShowCustomSearch] = useState(false);
 
   const cancelRunRef = useRef<(() => void) | null>(null);
-  const cancelBackfillRef = useRef<(() => void) | null>(null);
 
   // Load runs on mount
   useEffect(() => {
@@ -142,52 +137,6 @@ export function ScreenerPage() {
     cancelRunRef.current = cancel;
   }, [isRunning, thresholdMode, weightProfile, customWeights]);
 
-  const handleBackfill = useCallback(() => {
-    if (isRunning || isBackfilling) return;
-    setIsBackfilling(true);
-    setProgressEvents([]);
-    setProgressDone(0);
-    setProgressTotal(0);
-    setBackfillDay(undefined);
-
-    const cancel = screenerApi.triggerBackfill(
-      false,
-      (event: BackfillSSEEvent) => {
-        if (event.type === 'backfill_day_start') {
-          setBackfillDay({ day: event.day, totalDays: event.total_days, date: event.date });
-          setProgressEvents([]);
-          setProgressDone(0);
-          setProgressTotal(0);
-        } else if (event.type === 'progress') {
-          setProgressEvents((prev) => [...prev, event]);
-          setProgressDone(event.done);
-          setProgressTotal(event.total);
-        } else if (event.type === 'backfill_day_complete') {
-          // Refresh run list to pick up the newly completed day
-          screenerApi.listRuns(30).then((r) => {
-            setRuns(r);
-            setActiveRunId(event.run_id);
-          });
-        } else if (event.type === 'backfill_complete') {
-          setIsBackfilling(false);
-          setBackfillDay(undefined);
-          // Final refresh
-          screenerApi.listRuns(30).then((r) => setRuns(r));
-        } else if (event.type === 'error') {
-          setIsBackfilling(false);
-          setBackfillDay(undefined);
-          console.error('Backfill error:', (event as { message?: string }).message);
-        }
-      },
-      (err) => {
-        setIsBackfilling(false);
-        setBackfillDay(undefined);
-        console.error('Backfill connection error:', err);
-      },
-    );
-    cancelBackfillRef.current = cancel;
-  }, [isRunning, isBackfilling]);
-
   const handleRefreshConstituents = async () => {
     setIsRefreshing(true);
     try {
@@ -216,11 +165,9 @@ export function ScreenerPage() {
         runs={runs}
         activeRunId={activeRunId}
         isRunning={isRunning}
-        isBackfilling={isBackfilling}
         thresholdMode={thresholdMode}
         weightProfile={weightProfile}
         onRunScreener={handleRunScreener}
-        onBackfill={handleBackfill}
         onSelectRun={setActiveRunId}
         onThresholdChange={setThresholdMode}
         onWeightProfileChange={setWeightProfile}
@@ -231,15 +178,14 @@ export function ScreenerPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Main content */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Progress banner (single run or backfill) */}
-          {(isRunning || isBackfilling) && (
+          {/* Progress banner */}
+          {isRunning && (
             <div className="px-4 py-3 border-b shrink-0">
               <ScreenerRunProgress
                 events={progressEvents}
                 done={progressDone}
                 total={progressTotal}
-                isRunning={isRunning || isBackfilling}
-                backfill={backfillDay}
+                isRunning={isRunning}
               />
             </div>
           )}
