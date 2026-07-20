@@ -28,6 +28,44 @@ _cache = get_cache()
 # Exchange suffixes that route to yfinance instead of financialdatasets.ai
 _YF_SUFFIXES = (".NS", ".BO", ".BSE")
 
+# ---------------------------------------------------------------------------
+# Kite Connect singleton (FLW-005)
+# Initialized lazily on first .NS price request; shared across all callers.
+# Both globals stay None when Kite is not configured or kiteconnect is absent.
+# ---------------------------------------------------------------------------
+_kite_client = None
+_kite_token_lookup = None
+
+
+def _init_kite() -> None:
+    """
+    Initialize the Kite Connect client and token lookup exactly once per process.
+
+    If _kite_client is already set, returns immediately (AC-0223).
+    All failure modes (missing package, missing credentials, instruments() error)
+    are silently swallowed — both globals remain None (AC-0224).
+    """
+    global _kite_client, _kite_token_lookup
+    if _kite_client is not None:
+        return
+    try:
+        from kiteconnect import KiteConnect  # noqa: PLC0415
+        from src.config.kite_config import get_kite_config  # noqa: PLC0415
+        from src.tools.kite_api import build_token_lookup  # noqa: PLC0415
+
+        cfg = get_kite_config()
+        if not cfg["api_key"] or not cfg["access_token"]:
+            logger.debug("Kite credentials not configured; price data will use yfinance")
+            return
+        client = KiteConnect(api_key=cfg["api_key"])
+        client.set_access_token(cfg["access_token"])
+        lookup = build_token_lookup(client)
+        _kite_client = client
+        _kite_token_lookup = lookup
+        logger.info("Kite singleton initialized: %d NSE instruments", len(lookup))
+    except Exception as exc:
+        logger.debug("Kite init failed; falling back to yfinance: %s", exc)
+
 
 def _is_yf_ticker(ticker: str) -> bool:
     """Return True for exchange-suffixed tickers that yfinance handles (e.g. .NS, .BO)."""
@@ -69,8 +107,42 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
 
 
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
-    """Fetch price data from cache or API."""
+    """Fetch price data from cache or API.
+
+    For .NS tickers: Kite Connect is tried first (AC-0225); yfinance is the fallback (AC-0227).
+    For .BO/.BSE tickers: yfinance only — Kite covers NSE only (AC-0228).
+    For US tickers: financialdatasets.ai.
+    """
     if _is_yf_ticker(ticker):
+        # --- Kite-primary path for NSE tickers (AC-0225, AC-0226, AC-0227) ---
+        if ticker.upper().endswith(".NS"):
+            _init_kite()
+            if _kite_client is not None and _kite_token_lookup is not None:
+                cache_key = f"kite_{ticker}_{start_date}_{end_date}"
+                if cached := _cache.get_prices(cache_key):
+                    return [Price(**p) for p in cached]
+                try:
+                    from src.tools.kite_api import get_price_data_kite  # noqa: PLC0415
+                    symbol = ticker.removesuffix(".NS")
+                    df = get_price_data_kite(symbol, start_date, end_date,
+                                             token_lookup=_kite_token_lookup, kite=_kite_client)
+                    if df is not None and not df.empty:
+                        prices = [
+                            Price(
+                                open=float(row["open"]),
+                                high=float(row["high"]),
+                                low=float(row["low"]),
+                                close=float(row["close"]),
+                                volume=int(row["volume"]),
+                                time=idx.strftime("%Y-%m-%dT00:00:00"),
+                            )
+                            for idx, row in df.iterrows()
+                        ]
+                        _cache.set_prices(cache_key, [p.model_dump() for p in prices])
+                        return prices
+                except Exception as exc:
+                    logger.debug("Kite price fetch failed for %s, falling back to yfinance: %s", ticker, exc)
+        # --- yfinance fallback for all Indian tickers (AC-0227, AC-0228) ---
         from src.tools import yf_api
         return yf_api.get_prices(ticker, start_date, end_date)
     # Create a cache key that includes all parameters to ensure exact matches
