@@ -2,6 +2,22 @@ import { Flow } from '@/types/flow';
 
 const API_BASE_URL = 'http://localhost:8000';
 
+// AC-0242: shape of a completed flow run returned by the backend
+export interface FlowRunResponse {
+  id: number;
+  flow_id: number;
+  status: 'IDLE' | 'IN_PROGRESS' | 'COMPLETE' | 'ERROR';
+  run_number: number;
+  created_at: string;
+  completed_at: string | null;
+  results: {
+    decisions: Record<string, any>;
+    analyst_signals: Record<string, any>;
+    current_prices?: Record<string, number>;
+  } | null;
+  error_message: string | null;
+}
+
 export interface CreateFlowRequest {
   name: string;
   description?: string;
@@ -93,6 +109,18 @@ export const flowService = {
       throw new Error('Failed to duplicate flow');
     }
     return response.json();
+  },
+
+  // Get the most recent run for a flow (AC-0242, AC-0243)
+  async getLatestFlowRun(flowId: number): Promise<FlowRunResponse | null> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/flows/${flowId}/runs/latest`);
+      if (response.status === 404) return null;
+      if (!response.ok) return null;
+      return response.json();
+    } catch {
+      return null;
+    }
   },
 
   // Create a default flow for new users
