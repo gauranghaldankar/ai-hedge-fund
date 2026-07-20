@@ -49,6 +49,7 @@ export interface HedgeFundRequest extends BaseHedgeFundRequest {
   end_date?: string;
   start_date?: string;
   initial_cash?: number;
+  flow_id?: number; // AC-0234: links run to a saved flow for persistence
 }
 
 export interface BacktestRequest extends BaseHedgeFundRequest {
