@@ -1,24 +1,33 @@
 import { ProgressEvent } from './types';
 import { cn } from '@/lib/utils';
 
+interface BackfillContext {
+  day: number;
+  totalDays: number;
+  date: string;
+}
+
 interface ScreenerRunProgressProps {
   events: ProgressEvent[];
   total: number;
   done: number;
   isRunning: boolean;
+  backfill?: BackfillContext;
 }
 
-export function ScreenerRunProgress({ events, total, done, isRunning }: ScreenerRunProgressProps) {
+export function ScreenerRunProgress({ events, total, done, isRunning, backfill }: ScreenerRunProgressProps) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
   const recentEvents = [...events].slice(-5).reverse();
 
+  const title = backfill
+    ? `Backfilling Day ${backfill.day}/${backfill.totalDays} · ${backfill.date}`
+    : isRunning ? 'Running Screener...' : 'Screener Complete';
+
   return (
     <div className="space-y-3 p-4 border rounded-lg bg-muted/20">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">
-          {isRunning ? 'Running Screener...' : 'Screener Complete'}
-        </span>
+        <span className="text-sm font-medium">{title}</span>
         <span className="text-sm text-muted-foreground tabular-nums">
           {done} / {total} ({pct}%)
         </span>

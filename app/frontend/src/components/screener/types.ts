@@ -78,7 +78,37 @@ export interface ErrorEvent {
   message: string;
 }
 
+export interface BackfillStartEvent {
+  type: 'backfill_start';
+  dates: string[];
+  total_days: number;
+  skipped: number;
+}
+
+export interface BackfillDayStartEvent {
+  type: 'backfill_day_start';
+  date: string;
+  day: number;
+  total_days: number;
+}
+
+export interface BackfillDayCompleteEvent {
+  type: 'backfill_day_complete';
+  date: string;
+  day: number;
+  total_days: number;
+  run_id: number;
+  shortlisted: number;
+}
+
+export interface BackfillCompleteEvent {
+  type: 'backfill_complete';
+  days_run: number;
+  skipped: number;
+}
+
 export type SSEEvent = ProgressEvent | CompleteEvent | ErrorEvent;
+export type BackfillSSEEvent = ProgressEvent | BackfillStartEvent | BackfillDayStartEvent | BackfillDayCompleteEvent | BackfillCompleteEvent | ErrorEvent;
 
 export const COLOUR_BANDS = {
   deep_green: { min: 80, label: 'Strong Buy', className: 'text-emerald-400 bg-emerald-400/10' },
