@@ -4,6 +4,7 @@ import { flowConnectionManager } from '@/hooks/use-flow-connection';
 import { clearAllNodeStates, getAllNodeStates, setNodeInternalState, setCurrentFlowId as setNodeStateFlowId } from '@/hooks/use-node-state';
 import { flowService } from '@/services/flow-service';
 import { Flow } from '@/types/flow';
+import { useNodeContext } from '@/contexts/node-context';
 import { MarkerType, ReactFlowInstance, useReactFlow, XYPosition } from '@xyflow/react';
 import { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 
@@ -34,6 +35,7 @@ interface FlowProviderProps {
 
 export function FlowProvider({ children }: FlowProviderProps) {
   const reactFlowInstance = useReactFlow();
+  const nodeContext = useNodeContext();
   const [currentFlowId, setCurrentFlowId] = useState<number | null>(null);
   const [currentFlowName, setCurrentFlowName] = useState('Untitled Flow');
   const [isUnsaved, setIsUnsaved] = useState(false);
@@ -182,10 +184,17 @@ export function FlowProvider({ children }: FlowProviderProps) {
           console.log(`Flow ${flow.id} loaded - checking for stale connection states`);
         }
       }, 100);
+
+      // Restore last completed run results so the UI shows them on reopen (AC-0245, AC-0246)
+      flowService.getLatestFlowRun(flow.id).then((run) => {
+        if (run && run.status === 'COMPLETE' && run.results) {
+          nodeContext.setOutputNodeData(flow.id.toString(), run.results as any);
+        }
+      }).catch(() => {});
     } catch (error) {
       console.error('Failed to load flow:', error);
     }
-  }, [reactFlowInstance]);
+  }, [reactFlowInstance, nodeContext]);
 
   // Create a new flow
   const createNewFlow = useCallback(async () => {
