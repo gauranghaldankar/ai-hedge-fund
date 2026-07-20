@@ -7,10 +7,12 @@ Usage:
     for result in run_screener(tickers, on_progress=callback):
         ...
 
-Concurrency: ThreadPoolExecutor(max_workers=10) for yfinance data fetching.
+Concurrency: ThreadPoolExecutor(max_workers=10) for data fetching.
+Price/OHLCV data: Kite Connect (primary, AC-0118) → yfinance (fallback, AC-0119).
+Fundamentals and insider data: yfinance only (Kite has no fundamental API).
 Each ticker is scored independently; errors are captured per-ticker.
 
-AC-0101, AC-0116, AC-0117
+AC-0101, AC-0116, AC-0117, AC-0118, AC-0119, AC-0120
 """
 
 from __future__ import annotations
@@ -63,9 +65,18 @@ def _date_minus_days(date_str: str, days: int) -> str:
     return d.strftime("%Y-%m-%d")
 
 
-def _fetch_ticker_data(ticker: str, end_date: str) -> dict[str, Any]:
+def _fetch_ticker_data(
+    ticker: str,
+    end_date: str,
+    kite_token_lookup: dict[str, int] | None = None,
+    kite_client=None,
+) -> dict[str, Any]:
     """
-    Fetch all data needed for scoring a single ticker using yf_api functions.
+    Fetch all data needed for scoring a single ticker.
+
+    Price/OHLCV: Kite Connect first (AC-0118); yfinance fallback (AC-0119).
+    Fundamentals + insider: yfinance only (Kite has no fundamental API).
+
     Returns a dict with keys: ticker, financial_metrics (list[dict]),
     prices_df (pd.DataFrame|None), insider_trades (list[dict]).
     Never raises — returns partial data on error.
@@ -78,7 +89,7 @@ def _fetch_ticker_data(ticker: str, end_date: str) -> dict[str, Any]:
     }
     start_date = _date_minus_days(end_date, 365)
 
-    # --- Financial metrics ---
+    # --- Financial metrics (yfinance only — Kite has no fundamentals API) ---
     try:
         from src.tools.yf_api import get_financial_metrics
 
@@ -102,27 +113,46 @@ def _fetch_ticker_data(ticker: str, end_date: str) -> dict[str, Any]:
             logger.debug("search_line_items(free_cash_flow) failed for %s: %s", ticker, exc)
 
     # --- Price data (for technical scoring) ---
-    try:
-        from src.tools.yf_api import get_price_data
-
-        prices_df = get_price_data(ticker, start_date=start_date, end_date=end_date)
-        if prices_df is not None and not prices_df.empty:
-            data["prices_df"] = prices_df
-    except Exception as exc:
-        logger.debug("get_price_data failed for %s: %s", ticker, exc)
-
-    # Fallback: get_prices + prices_to_df
-    if data["prices_df"] is None or (isinstance(data["prices_df"], pd.DataFrame) and data["prices_df"].empty):
+    # Try Kite first; fall back to yfinance if Kite is not configured or fails (AC-0118, AC-0119)
+    kite_succeeded = False
+    if kite_token_lookup is not None and kite_client is not None:
         try:
-            from src.tools.yf_api import get_prices, prices_to_df
+            from src.tools.kite_api import get_price_data_kite
 
-            prices = get_prices(ticker, start_date=start_date, end_date=end_date)
-            if prices:
-                data["prices_df"] = prices_to_df(prices)
+            symbol = ticker.removesuffix(".NS").removesuffix(".BO")
+            prices_df = get_price_data_kite(
+                symbol, start_date, end_date,
+                token_lookup=kite_token_lookup, kite=kite_client,
+            )
+            if prices_df is not None and not prices_df.empty:
+                data["prices_df"] = prices_df
+                kite_succeeded = True
         except Exception as exc:
-            logger.debug("get_prices fallback failed for %s: %s", ticker, exc)
+            logger.debug("Kite price fetch failed for %s: %s", ticker, exc)
 
-    # --- Insider trades ---
+    if not kite_succeeded:
+        # yfinance primary fallback
+        try:
+            from src.tools.yf_api import get_price_data
+
+            prices_df = get_price_data(ticker, start_date=start_date, end_date=end_date)
+            if prices_df is not None and not prices_df.empty:
+                data["prices_df"] = prices_df
+        except Exception as exc:
+            logger.debug("get_price_data failed for %s: %s", ticker, exc)
+
+        # yfinance secondary fallback: get_prices + prices_to_df
+        if data["prices_df"] is None or (isinstance(data["prices_df"], pd.DataFrame) and data["prices_df"].empty):
+            try:
+                from src.tools.yf_api import get_prices, prices_to_df
+
+                prices = get_prices(ticker, start_date=start_date, end_date=end_date)
+                if prices:
+                    data["prices_df"] = prices_to_df(prices)
+            except Exception as exc:
+                logger.debug("get_prices fallback failed for %s: %s", ticker, exc)
+
+    # --- Insider trades (yfinance only) ---
     try:
         from src.tools.yf_api import get_insider_trades
 
@@ -157,12 +187,14 @@ def _score_ticker(
     industry: str,
     profile: WeightProfile,
     end_date: str,
+    kite_token_lookup: dict[str, int] | None = None,
+    kite_client=None,
 ) -> ScreenerResult:
     """Score a single ticker. Captures all errors per-ticker; run continues (AC-0117)."""
     result = ScreenerResult(ticker=ticker, company_name=company_name, industry=industry)
 
     try:
-        ticker_data = _fetch_ticker_data(ticker, end_date)
+        ticker_data = _fetch_ticker_data(ticker, end_date, kite_token_lookup, kite_client)
 
         result.valuation_score = score_valuation(ticker_data)
         result.fundamentals_score = score_fundamentals(ticker_data)
@@ -219,6 +251,25 @@ def run_screener(
     results: list[ScreenerResult] = []
     done_count = 0
 
+    # Build Kite context once per run; shared (read-only) across all worker threads (AC-0120)
+    kite_token_lookup: dict[str, int] = {}
+    kite_client = None
+    try:
+        from src.config.kite_config import get_kite_config
+        from src.tools.kite_api import build_token_lookup
+        from kiteconnect import KiteConnect  # noqa: PLC0415
+
+        cfg = get_kite_config()
+        if cfg["api_key"] and cfg["access_token"]:
+            kite_client = KiteConnect(api_key=cfg["api_key"])
+            kite_client.set_access_token(cfg["access_token"])
+            kite_token_lookup = build_token_lookup(kite_client)
+            logger.info("Kite initialized: %d instruments in token lookup", len(kite_token_lookup))
+        else:
+            logger.info("Kite credentials not configured; price data will use yfinance")
+    except Exception as exc:
+        logger.warning("Kite initialization failed; price data will use yfinance: %s", exc)
+
     start_time = time.time()
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -230,6 +281,8 @@ def run_screener(
                 info.get(ticker, ("", ""))[1],
                 p,
                 ed,
+                kite_token_lookup if kite_token_lookup else None,
+                kite_client,
             ): ticker
             for ticker in tickers
         }
