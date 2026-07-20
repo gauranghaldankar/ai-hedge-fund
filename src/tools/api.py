@@ -143,8 +143,14 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
                 except Exception as exc:
                     logger.debug("Kite price fetch failed for %s, falling back to yfinance: %s", ticker, exc)
         # --- yfinance fallback for all Indian tickers (AC-0227, AC-0228) ---
+        yf_cache_key = f"yf_{ticker}_{start_date}_{end_date}"
+        if cached := _cache.get_prices(yf_cache_key):
+            return [Price(**p) for p in cached]
         from src.tools import yf_api
-        return yf_api.get_prices(ticker, start_date, end_date)
+        yf_prices = yf_api.get_prices(ticker, start_date, end_date)
+        if yf_prices:
+            _cache.set_prices(yf_cache_key, [p.model_dump() for p in yf_prices])
+        return yf_prices
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date}_{end_date}"
     
@@ -232,11 +238,15 @@ def search_line_items(
     limit: int = 10,
     api_key: str = None,
 ) -> list[LineItem]:
-    """Fetch line items from API."""
+    """Fetch line items from cache or API."""
     if _is_yf_ticker(ticker):
         from src.tools import yf_api
         return yf_api.search_line_items(ticker, line_items, end_date, period, limit)
-    # If not in cache or insufficient data, fetch from API
+
+    cache_key = f"{ticker}_{','.join(sorted(line_items))}_{period}_{end_date}_{limit}"
+    if cached_data := _cache.get_line_items(cache_key):
+        return [LineItem(**item) for item in cached_data]
+
     headers = {}
     financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
     if financial_api_key:
@@ -254,7 +264,7 @@ def search_line_items(
     response = _make_api_request(url, headers, method="POST", json_data=body)
     if response.status_code != 200:
         return []
-    
+
     try:
         data = response.json()
         response_model = LineItemResponse(**data)
@@ -265,8 +275,9 @@ def search_line_items(
     if not search_results:
         return []
 
-    # Cache the results
-    return search_results[:limit]
+    result = search_results[:limit]
+    _cache.set_line_items(cache_key, [item.model_dump() for item in result])
+    return result
 
 
 def get_insider_trades(

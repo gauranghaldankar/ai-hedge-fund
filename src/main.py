@@ -10,6 +10,7 @@ from src.agents.risk_manager import risk_management_agent
 from src.graph.state import AgentState
 from src.utils.display import print_trading_output
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
+from src.utils.parsing import parse_hedge_fund_response
 from src.utils.progress import progress
 from src.utils.visualize import save_graph_as_png
 from src.cli.input import (
@@ -19,27 +20,12 @@ from src.cli.input import (
 import argparse
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-import json
 
 # Load environment variables from .env file
 load_dotenv()
 
 init(autoreset=True)
 
-
-def parse_hedge_fund_response(response):
-    """Parses a JSON string and returns a dictionary."""
-    try:
-        return json.loads(response)
-    except json.JSONDecodeError as e:
-        print(f"JSON decoding error: {e}\nResponse: {repr(response)}")
-        return None
-    except TypeError as e:
-        print(f"Invalid response type (expected string, got {type(response).__name__}): {e}")
-        return None
-    except Exception as e:
-        print(f"Unexpected error while parsing response: {e}\nResponse: {repr(response)}")
-        return None
 
 
 ##### Run the Hedge Fund #####
