@@ -286,7 +286,7 @@ async def backtest(request_data: BacktestRequest, request: Request, db: Session 
                     event = ProgressUpdateEvent(
                         agent="backtest",
                         ticker=None,
-                        status=f"Completed {backtest_result.date} - Portfolio: ${backtest_result.portfolio_value:,.2f}",
+                        status=f"Completed {backtest_result.date} - Portfolio: {'₹' if any(t.upper().endswith(('.NS', '.BO', '.BSE')) for t in (request_data.tickers or [])) else '$'}{backtest_result.portfolio_value:,.2f}",
                         timestamp=None,
                         analysis=analysis_data
                     )

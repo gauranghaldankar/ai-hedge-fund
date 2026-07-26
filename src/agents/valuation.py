@@ -43,7 +43,7 @@ def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analys
             continue
         most_recent_metrics = financial_metrics[0]
         _CURRENCY_SYMBOLS = {"USD": "$", "INR": "₹", "GBP": "£", "EUR": "€"}
-        cs = _CURRENCY_SYMBOLS.get(most_recent_metrics.currency, "$")
+        cs = _CURRENCY_SYMBOLS.get(most_recent_metrics.currency or "", "")
 
         # --- Enhanced line‑items ---
         progress.update_status(agent_id, ticker, "Gathering comprehensive line items")
