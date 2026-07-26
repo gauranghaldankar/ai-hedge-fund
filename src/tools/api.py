@@ -8,6 +8,7 @@ import time
 logger = logging.getLogger(__name__)
 
 from src.data.cache import get_cache
+from src.tools.trading_calendar import last_trading_day_str
 from src.data.models import (
     CompanyNews,
     CompanyNewsResponse,
@@ -113,6 +114,11 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
     For .BO/.BSE tickers: yfinance only — Kite covers NSE only (AC-0228).
     For US tickers: financialdatasets.ai.
     """
+    # Normalise end_date to the last real trading day so that weekend/holiday
+    # runs share the same cache key and don't make redundant API calls.
+    exchange = "NSE" if ticker.upper().endswith(".NS") else ("NSE" if _is_yf_ticker(ticker) else "US")
+    end_date = last_trading_day_str(end_date, exchange=exchange)
+
     if _is_yf_ticker(ticker):
         # --- Kite-primary path for NSE tickers (AC-0225, AC-0226, AC-0227) ---
         if ticker.upper().endswith(".NS"):
