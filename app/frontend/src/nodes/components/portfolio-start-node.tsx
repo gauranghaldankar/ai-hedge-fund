@@ -247,8 +247,8 @@ export function PortfolioStartNode({
         // No global model - each agent uses its own model or system default
         model_name: undefined,
         model_provider: undefined,
-        start_date: (() => { const d = new Date(); d.setMonth(d.getMonth() - 3); return d.toISOString().split('T')[0]; })(),
-        end_date: new Date().toISOString().split('T')[0],
+        start_date: startDate,
+        end_date: endDate,
         initial_cash: parseFloat(initialCash) || 100000,
         // Pass portfolio positions to backend
         portfolio_positions: portfolioPositions,
