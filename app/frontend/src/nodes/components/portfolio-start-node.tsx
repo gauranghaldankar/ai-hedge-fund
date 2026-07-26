@@ -247,8 +247,10 @@ export function PortfolioStartNode({
         // No global model - each agent uses its own model or system default
         model_name: undefined,
         model_provider: undefined,
+        // Single run always uses today as end_date so prices are current.
+        // startDate from state is honoured (lookback window for volatility/signals).
         start_date: startDate,
-        end_date: endDate,
+        end_date: new Date().toISOString().split('T')[0],
         initial_cash: parseFloat(initialCash) || 100000,
         // Pass portfolio positions to backend
         portfolio_positions: portfolioPositions,
