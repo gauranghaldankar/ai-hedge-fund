@@ -1,11 +1,17 @@
-from langchain_core.messages import HumanMessage
-from src.graph.state import AgentState, show_agent_reasoning
-from src.utils.progress import progress
-from src.tools.api import get_prices, prices_to_df
 import json
+import logging
+from datetime import date as _date
+
 import numpy as np
 import pandas as pd
+from langchain_core.messages import HumanMessage
+
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_current_price_ltp, get_prices, prices_to_df
 from src.utils.api_key import get_api_key_from_state
+from src.utils.progress import progress
+
+logger = logging.getLogger(__name__)
 
 ##### Risk Management Agent #####
 def risk_management_agent(state: AgentState, agent_id: str = "risk_management_agent"):
@@ -48,8 +54,18 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
         
         if not prices_df.empty and len(prices_df) > 1:
             current_price = prices_df["close"].iloc[-1]
+
+            # For single-run (end_date >= today), try to override the EOD close
+            # with a live Last Traded Price from Kite so the price is current.
+            # Backtest keeps the point-in-time historical close unchanged.
+            if data["end_date"] >= _date.today().isoformat():
+                ltp = get_current_price_ltp(ticker)
+                if ltp:
+                    logger.debug("LTP override for %s: %.2f → %.2f", ticker, current_price, ltp)
+                    current_price = ltp
+
             current_prices[ticker] = current_price
-            
+
             # Calculate volatility metrics
             volatility_metrics = calculate_volatility_metrics(prices_df)
             volatility_data[ticker] = volatility_metrics
@@ -58,10 +74,10 @@ def risk_management_agent(state: AgentState, agent_id: str = "risk_management_ag
             daily_returns = prices_df["close"].pct_change().dropna()
             if len(daily_returns) > 0:
                 returns_by_ticker[ticker] = daily_returns
-            
+
             progress.update_status(
-                agent_id, 
-                ticker, 
+                agent_id,
+                ticker,
                 f"Price: {current_price:.2f}, Ann. Vol: {volatility_metrics['annualized_volatility']:.1%}"
             )
         else:

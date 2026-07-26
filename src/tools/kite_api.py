@@ -23,6 +23,34 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def get_ltp_kite(symbol: str, kite) -> float | None:
+    """Fetch the Last Traded Price for a bare NSE symbol via Kite Connect.
+
+    Uses kite.ltp("NSE:<symbol>") which returns the live market price during
+    trading hours, or the last session's closing price otherwise (weekends,
+    holidays, pre/post-market).  No instrument token required.
+
+    Parameters
+    ----------
+    symbol : bare NSE tradingsymbol, e.g. "RELIANCE" (no .NS suffix)
+    kite   : initialised KiteConnect instance
+
+    Returns
+    -------
+    float price, or None on any failure.
+    """
+    instrument_key = f"NSE:{symbol}"
+    try:
+        result = kite.ltp(instrument_key)
+        price = result.get(instrument_key, {}).get("last_price")
+        if price and float(price) > 0:
+            return float(price)
+        return None
+    except Exception as exc:
+        logger.warning("kite.ltp failed for %s: %s", instrument_key, exc)
+        return None
+
+
 def build_token_lookup(kite) -> dict[str, int]:
     """
     Fetch the NSE instrument list and return {tradingsymbol: instrument_token}

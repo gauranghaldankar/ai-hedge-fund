@@ -24,7 +24,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _START = "2025-01-01"
-_END = "2025-06-01"
+_END = "2025-05-30"   # Friday — last_trading_day normalises to itself, keeping assertions stable
 
 _SAMPLE_DF = pd.DataFrame(
     {

@@ -73,6 +73,26 @@ def _is_yf_ticker(ticker: str) -> bool:
     return any(ticker.upper().endswith(s) for s in _YF_SUFFIXES)
 
 
+def get_current_price_ltp(ticker: str) -> float | None:
+    """Return the Last Traded Price for an NSE ticker via Kite Connect.
+
+    Returns the live market price during trading hours, or the previous
+    session's close at all other times (weekends, holidays, pre/post-market).
+    Returns None for non-.NS tickers or when Kite is unavailable.
+
+    Not cached — callers should only invoke this when a real-time price is
+    needed (i.e. single-run mode with end_date >= today).
+    """
+    if not ticker.upper().endswith(".NS"):
+        return None
+    _init_kite()
+    if _kite_client is None:
+        return None
+    from src.tools.kite_api import get_ltp_kite  # noqa: PLC0415
+    symbol = ticker.removesuffix(".NS")
+    return get_ltp_kite(symbol, _kite_client)
+
+
 def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: dict = None, max_retries: int = 3) -> requests.Response:
     """
     Make an API request with rate limiting handling and moderate backoff.
