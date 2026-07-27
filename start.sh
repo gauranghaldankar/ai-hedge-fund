@@ -118,8 +118,8 @@ kill_port "$BACKEND_PORT"
 kill_port "$FRONTEND_PORT"
 
 # ── start backend ─────────────────────────────────────────────────────────────
-# Use the py3.12 venv directly — `poetry run` picks up py3.14 which lacks deps.
-PYTHON312="/Users/gaurang/Library/Caches/pypoetry/virtualenvs/ai-hedge-fund-sIoZFlJA-py3.12/bin/python"
+# Use the py3.11 venv directly — `poetry run` picks up py3.14 which lacks deps.
+PYTHON312="/Users/gaurang/Library/Caches/pypoetry/virtualenvs/ai-hedge-fund-sIoZFlJA-py3.11/bin/python"
 info "Starting backend on port $BACKEND_PORT..."
 CORS_ORIGINS="http://localhost:${FRONTEND_PORT},http://127.0.0.1:${FRONTEND_PORT}" \
     "$PYTHON312" -m uvicorn app.backend.main:app \

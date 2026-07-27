@@ -35,7 +35,9 @@ def get_kite_config() -> dict:
     api_key: str | None = os.environ.get("KITE_API_KEY", "").strip() or None
     if api_key is None:
         if _FALLBACK_API_KEY_PATH.is_file():
-            api_key = _FALLBACK_API_KEY_PATH.read_text().strip() or None
+            # File may contain extra fields (secret, URL, etc.) after the key — take first token only.
+            raw = _FALLBACK_API_KEY_PATH.read_text().strip()
+            api_key = raw.split()[0] if raw else None
             if api_key:
                 logger.debug("KITE_API_KEY env var not set; loaded from fallback path %s", _FALLBACK_API_KEY_PATH)
     if api_key is None:
