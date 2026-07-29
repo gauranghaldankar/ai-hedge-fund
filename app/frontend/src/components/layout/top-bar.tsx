@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { PanelBottom, PanelLeft, PanelRight, Settings, BarChart2 } from 'lucide-react';
+import { PanelBottom, PanelLeft, PanelRight, Settings, BarChart2, TrendingUp } from 'lucide-react';
 
 interface TopBarProps {
   isLeftCollapsed: boolean;
@@ -11,6 +11,7 @@ interface TopBarProps {
   onToggleBottom: () => void;
   onSettingsClick: () => void;
   onScreenerClick?: () => void;
+  onPnLClick?: () => void;
 }
 
 export function TopBar({
@@ -22,6 +23,7 @@ export function TopBar({
   onToggleBottom,
   onSettingsClick,
   onScreenerClick,
+  onPnLClick,
 }: TopBarProps) {
   return (
     <div className="absolute top-0 right-0 z-40 flex items-center gap-0 py-1 px-2 bg-panel/80">
@@ -85,6 +87,21 @@ export function TopBar({
         >
           <BarChart2 size={14} />
           Screener
+        </Button>
+      )}
+
+      {/* P&L */}
+      {onPnLClick && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onPnLClick}
+          className="h-8 px-2 gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
+          aria-label="Open P&L history"
+          title="Open P&L History"
+        >
+          <TrendingUp size={14} />
+          P&amp;L
         </Button>
       )}
 

@@ -1,11 +1,12 @@
 import { Settings } from '@/components/settings/settings';
 import { FlowTabContent } from '@/components/tabs/flow-tab-content';
 import { ScreenerPage } from '@/components/screener/ScreenerPage';
+import { PnLPage } from '@/components/pnl/PnLPage';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
 export interface TabData {
-  type: 'flow' | 'settings' | 'screener';
+  type: 'flow' | 'settings' | 'screener' | 'pnl';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -25,6 +26,9 @@ export class TabService {
 
       case 'screener':
         return createElement(ScreenerPage);
+
+      case 'pnl':
+        return createElement(PnLPage);
 
       default:
         throw new Error(`Unsupported tab type: ${tabData.type}`);
@@ -56,6 +60,14 @@ export class TabService {
     };
   }
 
+  static createPnLTab(): TabData & { content: ReactNode } {
+    return {
+      type: 'pnl',
+      title: 'P&L',
+      content: TabService.createTabContent({ type: 'pnl', title: 'P&L' }),
+    };
+  }
+
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -75,6 +87,9 @@ export class TabService {
 
       case 'screener':
         return TabService.createScreenerTab();
+
+      case 'pnl':
+        return TabService.createPnLTab();
 
       default:
         throw new Error(`Cannot restore unsupported tab type: ${savedTab.type}`);
