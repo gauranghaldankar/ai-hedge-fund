@@ -8,6 +8,7 @@ interface ScreenerShortlistProps {
   activeProfile: WeightProfile | null;
   customWeights: WeightValues;
   onSelectStock: (row: ScreenerResultRow) => void;
+  onAnalyzeInFlow?: (tickers: string[]) => void;
 }
 
 export function ScreenerShortlist({
@@ -15,6 +16,7 @@ export function ScreenerShortlist({
   activeProfile,
   customWeights,
   onSelectStock,
+  onAnalyzeInFlow,
 }: ScreenerShortlistProps) {
   const shortlisted = results.filter((r) => r.is_shortlisted);
 
@@ -30,6 +32,14 @@ export function ScreenerShortlist({
         <div className="w-2 h-2 rounded-full bg-emerald-500" />
         <span className="text-sm font-semibold">Shortlisted ({shortlisted.length})</span>
         <span className="text-xs text-muted-foreground">— Score ≥ threshold</span>
+        {onAnalyzeInFlow && (
+          <button
+            onClick={() => onAnalyzeInFlow(shortlisted.map((r) => r.ticker))}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 hover:border-emerald-500/50 transition-all"
+          >
+            Analyze in Flow
+          </button>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2">

@@ -18,6 +18,9 @@ import { ScreenerRunProgress } from './ScreenerRunProgress';
 import { ScreenerStockDetail } from './ScreenerStockDetail';
 import { WeightSliders } from './WeightSliders';
 import { CustomTickerSearch } from './CustomTickerSearch';
+import { useTabsContext } from '@/contexts/tabs-context';
+import { flowService } from '@/services/flow-service';
+import { TabService } from '@/services/tab-service';
 
 const DEFAULT_CUSTOM_WEIGHTS: WeightValues = {
   valuation: 20,
@@ -38,6 +41,7 @@ function loadCustomWeights(): WeightValues {
 }
 
 export function ScreenerPage() {
+  const { openTab } = useTabsContext();
   const [runs, setRuns] = useState<ScreenerRunSummary[]>([]);
   const [activeRunId, setActiveRunId] = useState<number | null>(null);
   const [results, setResults] = useState<ScreenerResultRow[]>([]);
@@ -159,6 +163,46 @@ export function ScreenerPage() {
     window.dispatchEvent(new CustomEvent('screener:run-full-analysis', { detail: { ticker } }));
   };
 
+  // Create a new flow pre-filled with the shortlisted tickers and open it as a tab
+  const handleAnalyzeInFlow = useCallback(async (tickers: string[]) => {
+    if (tickers.length === 0) return;
+
+    const tickerString = tickers.join(',');
+    const nodeId = 'stock-analyzer-node_screener';
+    const today = new Date().toISOString().split('T')[0];
+    const threeMonthsAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const nodes = [
+      {
+        id: nodeId,
+        type: 'stock-analyzer-node',
+        position: { x: 200, y: 200 },
+        data: { name: 'Stock Input', description: 'Enter individual stocks and connect this node to Analysts to generate insights.', status: 'Idle' },
+      },
+    ];
+
+    const flow = await flowService.createFlow({
+      name: `Screener Analysis — ${new Date().toLocaleDateString('en-IN')}`,
+      description: `Auto-created from screener shortlist: ${tickerString}`,
+      nodes,
+      edges: [],
+      data: {
+        nodeStates: {
+          [nodeId]: {
+            tickers: tickerString,
+            runMode: 'single',
+            initialCash: '100000',
+            startDate: threeMonthsAgo,
+            endDate: today,
+          },
+        },
+      },
+    });
+
+    const tabData = TabService.createFlowTab(flow);
+    openTab(tabData as any);
+  }, [openTab]);
+
   return (
     <div className="h-full flex flex-col bg-background overflow-hidden">
       <ScreenerToolbar
@@ -209,6 +253,7 @@ export function ScreenerPage() {
                 activeProfile={activeProfile}
                 customWeights={customWeights}
                 onSelectStock={setSelectedRow}
+                onAnalyzeInFlow={handleAnalyzeInFlow}
               />
             </div>
           )}
