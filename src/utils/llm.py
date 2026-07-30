@@ -67,7 +67,7 @@ def call_llm(
         model_name, model_provider = get_agent_model_config(state, agent_name)
     else:
         # Default to Google Gemini
-        model_name = "gemini-3.1-flash-lite"
+        model_name = "gemini-2.0-flash"
         model_provider = "Google"
 
     # Extract API keys from state if available
