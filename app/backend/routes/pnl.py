@@ -23,21 +23,20 @@ router = APIRouter(prefix="/pnl", tags=["pnl"])
 
 
 def _fetch_current_price(ticker: str) -> float | None:
-    """Get latest price via the existing api module (Kite → yfinance fallback)."""
+    """Get latest price: Kite LTP for .NS tickers, then yfinance for everything else."""
     try:
-        from src.tools.api import get_current_price_ltp, get_prices
-        from datetime import date
+        from src.tools.api import get_current_price_ltp
+        import yfinance as yf
 
-        # Try LTP first for .NS tickers
+        # Try live LTP first for NSE tickers
         ltp = get_current_price_ltp(ticker)
         if ltp:
             return ltp
 
-        # Fall back to last close
-        today = date.today().isoformat()
-        prices = get_prices(ticker, "2026-01-01", today)
-        if prices:
-            return float(prices[-1].close)
+        # yfinance fallback — works for US tickers (AAPL, NVDA…) and .NS when Kite LTP fails
+        hist = yf.Ticker(ticker).history(period="5d")
+        if not hist.empty:
+            return float(hist["Close"].iloc[-1])
     except Exception as exc:
         logger.debug("Price fetch failed for %s: %s", ticker, exc)
     return None

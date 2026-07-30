@@ -132,7 +132,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
 
     For .NS tickers: Kite Connect is tried first (AC-0225); yfinance is the fallback (AC-0227).
     For .BO/.BSE tickers: yfinance only — Kite covers NSE only (AC-0228).
-    For US tickers: financialdatasets.ai.
+    For US tickers: financialdatasets.ai, with yfinance as fallback when no API key is set.
     """
     # Normalise end_date to the last real trading day so that weekend/holiday
     # runs share the same cache key and don't make redundant API calls.
@@ -192,16 +192,23 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
 
     url = f"https://api.financialdatasets.ai/prices/?ticker={ticker}&interval=day&interval_multiplier=1&start_date={start_date}&end_date={end_date}"
     response = _make_api_request(url, headers)
-    if response.status_code != 200:
-        return []
+    prices = []
+    if response.status_code == 200:
+        try:
+            price_response = PriceResponse(**response.json())
+            prices = price_response.prices or []
+        except Exception as e:
+            logger.warning("Failed to parse price response for %s: %s", ticker, e)
 
-    # Parse response with Pydantic model
-    try:
-        price_response = PriceResponse(**response.json())
-        prices = price_response.prices
-    except Exception as e:
-        logger.warning("Failed to parse price response for %s: %s", ticker, e)
-        return []
+    if not prices:
+        # yfinance fallback for US tickers when financialdatasets is unavailable or returns empty
+        try:
+            from src.tools import yf_api
+            prices = yf_api.get_prices(ticker, start_date, end_date)
+            if prices:
+                logger.debug("yfinance fallback succeeded for US ticker %s (%d rows)", ticker, len(prices))
+        except Exception as exc:
+            logger.debug("yfinance fallback failed for %s: %s", ticker, exc)
 
     if not prices:
         return []
